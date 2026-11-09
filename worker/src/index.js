@@ -10,7 +10,7 @@
 
 import { submitPage } from "./pages/submit.js";
 import { adminPage } from "./pages/admin.js";
-import { formatId } from "./util.js";
+import { formatId, sinkExpired } from "./util.js";
 
 const MAX_IMAGE_BYTES = 600 * 1024; // 投稿ページ側で縮めてから送るので、これを超えるのは異常
 const RATE_PER_HOUR = 3;
@@ -130,6 +130,7 @@ async function handleReview(request, env) {
   const now = Date.now();
 
   if (action === "approve") {
+    await sinkExpired(env); // 沈んだボトルの画像の置き場所を先に空ける
     let slot = row.slot;
     if (row.has_image && slot == null) {
       slot = await findFreeSlot(env);
@@ -162,6 +163,7 @@ async function findFreeSlot(env) {
 // ───────── 書き出し（GitHub Actions 用） ─────────
 
 async function handleExport(env) {
+  await sinkExpired(env);
   const { results } = await env.DB.prepare(
     "SELECT id, text, slot, reviewed_at FROM bottles WHERE status = 'approved' ORDER BY id"
   ).all();

@@ -7,6 +7,8 @@ compatibility_date = "2025-09-01"
 MAX_TEXT = "140"
 # 画像の置き場所の数（アトラス 16 枚 × 16 マス）。ワールド側の atlasUrls の数と合わせる
 MAX_SLOTS = "256"
+# 承認してから海の底に沈む（配信から外れる）までの日数
+EXPIRE_DAYS = "7"
 # Turnstile のサイトキー（空なら CAPTCHA なし。公開前に必ず設定する）
 TURNSTILE_SITE_KEY = ""
 

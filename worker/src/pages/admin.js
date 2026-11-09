@@ -1,7 +1,9 @@
 // 確認画面（スマホで1件ずつタップして承認・却下する）
-import { formatId } from "../util.js";
+import { formatId, expireDays, sinkExpired } from "../util.js";
 
 export async function adminPage(env) {
+  await sinkExpired(env);
+  const days = expireDays(env);
   const pending = await env.DB.prepare(
     "SELECT id, text, image IS NOT NULL AS has_image, created_at FROM bottles WHERE status = 'pending' ORDER BY id LIMIT 50"
   ).all();
@@ -13,7 +15,7 @@ export async function adminPage(env) {
 
   const card = (r, buttons) => `
     <article class="card" id="b${r.id}">
-      <div class="meta">No.${formatId(r.id)}${r.slot != null ? ` ・ 画像枠 ${r.slot}` : ""} ・ ${fmtDate(r.created_at || r.reviewed_at)}</div>
+      <div class="meta">No.${formatId(r.id)}${r.slot != null ? ` ・ 画像枠 ${r.slot}` : ""} ・ ${fmtDate(r.created_at || r.reviewed_at)}${r.reviewed_at ? ` ・ ${remaining(r.reviewed_at, days)}` : ""}</div>
       ${r.has_image ? `<img src="/admin/image/${r.id}" loading="lazy" alt="">` : ""}
       <p class="text">${escapeHtml(r.text)}</p>
       <div class="actions">${buttons}</div>
@@ -60,8 +62,8 @@ export async function adminPage(env) {
 <body>
 <main>
   <h1>ボトルメール確認</h1>
-  <div class="summary">確認待ち ${count.pending || 0} ・ 公開中 ${count.approved || 0} ・ 却下 ${count.rejected || 0} ・ 取り下げ ${count.removed || 0}</div>
-  <p class="summary">承認したボトルは、次の配信（最長30分後）でワールドに届くようになります。</p>
+  <div class="summary">確認待ち ${count.pending || 0} ・ 公開中 ${count.approved || 0} ・ 却下 ${count.rejected || 0} ・ 取り下げ ${count.removed || 0} ・ 沈んだ ${count.sunk || 0}</div>
+  <p class="summary">承認したボトルは、次の配信（最長30分後）でワールドに届くようになり、承認から ${days} 日で海の底に沈みます（配信から外れ、画像も削除されます）。</p>
 
   <h2>確認待ち</h2>
   ${pendingHtml}
@@ -94,6 +96,13 @@ document.addEventListener("click", async (e) => {
 </script>
 </body>
 </html>`;
+}
+
+function remaining(reviewedAt, days) {
+  const left = reviewedAt + days * 86400_000 - Date.now();
+  if (left <= 0) return "まもなく沈む";
+  const h = Math.floor(left / 3600_000);
+  return h >= 24 ? `あと ${Math.floor(h / 24)} 日で沈む` : `あと ${h} 時間で沈む`;
 }
 
 function fmtDate(ms) {
