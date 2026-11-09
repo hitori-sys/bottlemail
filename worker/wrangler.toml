@@ -19,4 +19,4 @@ TURNSTILE_SITE_KEY = ""
 [[d1_databases]]
 binding = "DB"
 database_name = "bottlemail"
-database_id = "REPLACE_WITH_D1_ID"
+database_id = "00d479e6-5e89-4e72-9e6f-ecb1ab3c6b3b"
