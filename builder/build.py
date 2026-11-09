@@ -25,6 +25,7 @@ from PIL import Image, ImageOps
 
 GRID = 4                 # 1 枚のアトラスに 4x4 マス
 CELL = 512               # 1 マスの大きさ
+MARGIN = 12              # マスの内側の余白（縮小表示で隣のマスがにじみ込まないように）
 SLOTS_PER_ATLAS = GRID * GRID
 BACKGROUND = (224, 214, 189)  # 手紙の写真枠と同じ色（余白に使う）
 OUT_DIR = "_site"
@@ -42,7 +43,7 @@ def fit_into_cell(data):
     """画像を 512x512 のマスに収める（縦横比は保ち、余白は背景色）。メタデータは捨てる。"""
     img = Image.open(io.BytesIO(data))
     img = ImageOps.exif_transpose(img).convert("RGB")
-    img.thumbnail((CELL, CELL), Image.LANCZOS)
+    img.thumbnail((CELL - MARGIN * 2, CELL - MARGIN * 2), Image.LANCZOS)
     cell = Image.new("RGB", (CELL, CELL), BACKGROUND)
     cell.paste(img, ((CELL - img.width) // 2, (CELL - img.height) // 2))
     return cell
@@ -59,6 +60,8 @@ def main():
     atlases = {}  # atlas 番号 -> Image
     entries = []
     digest = hashlib.sha256()
+    # 画像の並べ方を変えたら公開し直されるように、レイアウトも rev に含める
+    digest.update(f"layout:{GRID}:{CELL}:{MARGIN}".encode())
 
     for b in bottles:
         entry = {"id": b["id"], "text": b["text"]}
