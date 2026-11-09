@@ -1,7 +1,28 @@
 // 投稿ページ（スマホ前提の1枚もの）
-export function submitPage(env) {
+// admin: true のときは管理者用（連投制限・ボット対策なし、すぐ公開・沈まないを選べる、続けて書ける）
+export function submitPage(env, { admin = false } = {}) {
   const maxText = parseInt(env.MAX_TEXT || "140", 10);
-  const siteKey = env.TURNSTILE_SITE_KEY || "";
+  const siteKey = admin ? "" : env.TURNSTILE_SITE_KEY || "";
+  const title = admin ? "管理者としてボトルを流す" : "ボトルメールを流す";
+  const lead = admin
+    ? '連投制限なしで流せます。<a href="/admin">確認画面に戻る</a>'
+    : "あなたの手紙を、どこかの浜辺に届けます。<br>VRChat のどこかのインスタンスで、知らない誰かが拾うかもしれません。";
+  const notice = admin
+    ? `<div class="note">
+        <label class="agree"><input type="checkbox" id="publish" checked> すぐ公開する（外すと確認待ちに入る）</label>
+        <label class="agree"><input type="checkbox" id="pinned"> 沈まない（期限で配信から外れない）</label>
+      </div>`
+    : `<div class="note">
+        流す前に読んでください
+        <ul>
+          <li>手紙は確認してから流します。届くまで時間がかかったり、届かないこともあります。</li>
+          <li>流した手紙は<strong>公開されます</strong>（誰でも読める状態になります）。</li>
+          <li>名前・連絡先・住所など、あなたや他の人が分かることは書かないでください。</li>
+          <li>画像の位置情報などは、送る前にこの画面で消しています。</li>
+        </ul>
+      </div>
+
+      <label class="agree"><input type="checkbox" id="agree"> 上のことを読んで、公開されることに同意します</label>`;
   const turnstileScript = siteKey
     ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>'
     : "";
@@ -13,7 +34,7 @@ export function submitPage(env) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>ボトルメールを流す</title>
+<title>${title}</title>
 ${turnstileScript}
 <style>
   :root {
@@ -60,8 +81,8 @@ ${turnstileScript}
 </head>
 <body>
 <main>
-  <h1>ボトルメールを流す</h1>
-  <p class="lead">あなたの手紙を、どこかの浜辺に届けます。<br>VRChat のどこかのインスタンスで、知らない誰かが拾うかもしれません。</p>
+  <h1>${title}</h1>
+  <p class="lead">${lead}</p>
 
   <div class="card" id="formCard">
     <form id="form">
@@ -80,17 +101,7 @@ ${turnstileScript}
         </div>
       </div>
 
-      <div class="note">
-        流す前に読んでください
-        <ul>
-          <li>手紙は確認してから流します。届くまで時間がかかったり、届かないこともあります。</li>
-          <li>流した手紙は<strong>公開されます</strong>（誰でも読める状態になります）。</li>
-          <li>名前・連絡先・住所など、あなたや他の人が分かることは書かないでください。</li>
-          <li>画像の位置情報などは、送る前にこの画面で消しています。</li>
-        </ul>
-      </div>
-
-      <label class="agree"><input type="checkbox" id="agree"> 上のことを読んで、公開されることに同意します</label>
+      ${notice}
       ${turnstileWidget}
       <button class="send" id="send" type="submit" disabled>海に流す</button>
       <div class="message" id="message"></div>
@@ -99,6 +110,7 @@ ${turnstileScript}
 </main>
 
 <script>
+const ADMIN = ${admin ? "true" : "false"};
 const MAX = ${maxText};
 const MAX_SIDE = 1024;
 const MAX_BYTES = 550 * 1024;
@@ -118,10 +130,10 @@ function update() {
   const n = length(textEl.value);
   counter.textContent = n + " / " + MAX;
   counter.classList.toggle("over", n > MAX);
-  send.disabled = !(agree.checked && n > 0 && n <= MAX);
+  send.disabled = !((ADMIN || agree.checked) && n > 0 && n <= MAX);
 }
 textEl.addEventListener("input", update);
-agree.addEventListener("change", update);
+if (agree) agree.addEventListener("change", update);
 
 fileEl.addEventListener("change", async () => {
   message.textContent = "";
@@ -175,10 +187,27 @@ form.addEventListener("submit", async (e) => {
   if (imageBlob) data.append("image", imageBlob, "image.jpg");
   const ts = form.querySelector('[name="cf-turnstile-response"]');
   if (ts) data.append("cf-turnstile-response", ts.value);
+  if (ADMIN) {
+    data.append("publish", document.getElementById("publish").checked ? "1" : "0");
+    data.append("pinned", document.getElementById("pinned").checked ? "1" : "0");
+  }
   try {
-    const res = await fetch("/api/submit", { method: "POST", body: data });
+    const res = ADMIN
+      ? await fetch("/admin/submit", { method: "POST", body: data, headers: { "X-BottleMail-Admin": "1" } })
+      : await fetch("/api/submit", { method: "POST", body: data });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error || "送れませんでした。");
+    if (ADMIN) {
+      // 続けて書けるように、フォームは残して中身だけ空にする
+      textEl.value = "";
+      imageBlob = null;
+      fileEl.value = "";
+      preview.style.display = "none";
+      message.textContent = "No." + body.id + " を流しました。続けて書けます。";
+      message.className = "message";
+      update();
+      return;
+    }
     document.getElementById("formCard").innerHTML =
       '<div class="done"><strong>ボトルを海に流しました</strong><br>確認が済むと、どこかの浜辺に流れ着きます。<br>ボトル番号：No.' + body.id +
       '<br><br><a href="/">もう1通流す</a></div>';

@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS bottles (
   image_type  TEXT,
   status      TEXT    NOT NULL DEFAULT 'pending',
   slot        INTEGER,            -- 画像の置き場所（atlas * 16 + cell）。承認時に割り当て、以後固定
+  pinned      INTEGER NOT NULL DEFAULT 0, -- 1 なら期限で沈まない（管理者の投稿用）
   ip_hash     TEXT,               -- 連投制限用（IP そのものは保存しない）
   created_at  INTEGER NOT NULL,
   reviewed_at INTEGER

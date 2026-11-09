@@ -11,6 +11,6 @@ export function expireDays(env) {
 export async function sinkExpired(env) {
   const cutoff = Date.now() - expireDays(env) * 86400_000;
   await env.DB.prepare(
-    "UPDATE bottles SET status = 'sunk', slot = NULL, image = NULL WHERE status = 'approved' AND reviewed_at < ?1"
+    "UPDATE bottles SET status = 'sunk', slot = NULL, image = NULL WHERE status = 'approved' AND pinned = 0 AND reviewed_at < ?1"
   ).bind(cutoff).run();
 }

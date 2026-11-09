@@ -8,14 +8,14 @@ export async function adminPage(env) {
     "SELECT id, text, image IS NOT NULL AS has_image, created_at FROM bottles WHERE status = 'pending' ORDER BY id LIMIT 50"
   ).all();
   const approved = await env.DB.prepare(
-    "SELECT id, text, image IS NOT NULL AS has_image, slot, reviewed_at FROM bottles WHERE status = 'approved' ORDER BY reviewed_at DESC LIMIT 100"
+    "SELECT id, text, image IS NOT NULL AS has_image, slot, pinned, reviewed_at FROM bottles WHERE status = 'approved' ORDER BY reviewed_at DESC LIMIT 100"
   ).all();
   const counts = await env.DB.prepare("SELECT status, COUNT(*) AS n FROM bottles GROUP BY status").all();
   const count = Object.fromEntries(counts.results.map((r) => [r.status, r.n]));
 
   const card = (r, buttons) => `
     <article class="card" id="b${r.id}">
-      <div class="meta">No.${formatId(r.id)}${r.slot != null ? ` ・ 画像枠 ${r.slot}` : ""} ・ ${fmtDate(r.created_at || r.reviewed_at)}${r.reviewed_at ? ` ・ ${remaining(r.reviewed_at, days)}` : ""}</div>
+      <div class="meta">No.${formatId(r.id)}${r.slot != null ? ` ・ 画像枠 ${r.slot}` : ""} ・ ${fmtDate(r.created_at || r.reviewed_at)}${r.pinned ? " ・ 沈まない" : r.reviewed_at ? ` ・ ${remaining(r.reviewed_at, days)}` : ""}</div>
       ${r.has_image ? `<img src="/admin/image/${r.id}" loading="lazy" alt="">` : ""}
       <p class="text">${escapeHtml(r.text)}</p>
       <div class="actions">${buttons}</div>
@@ -57,11 +57,13 @@ export async function adminPage(env) {
   .actions button:disabled { opacity: .5; }
   .done { opacity: .45; }
   .empty { color: var(--muted); }
+  a.new { display: inline-block; padding: 10px 14px; background: #2f8fb3; color: #fff; border-radius: 8px; text-decoration: none; font-weight: bold; }
 </style>
 </head>
 <body>
 <main>
   <h1>ボトルメール確認</h1>
+  <p><a class="new" href="/admin/new">＋ 管理者としてボトルを流す</a></p>
   <div class="summary">確認待ち ${count.pending || 0} ・ 公開中 ${count.approved || 0} ・ 却下 ${count.rejected || 0} ・ 取り下げ ${count.removed || 0} ・ 沈んだ ${count.sunk || 0}</div>
   <p class="summary">承認したボトルは、次の配信（最長30分後）でワールドに届くようになり、承認から ${days} 日で海の底に沈みます（配信から外れ、画像も削除されます）。</p>
 

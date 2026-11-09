@@ -5,6 +5,8 @@
 //   GET  /admin                確認画面（Basic 認証。ユーザー名 admin / パスワード ADMIN_PASSWORD）
 //   GET  /admin/image/:id      投稿画像（管理者のみ）
 //   POST /admin/review         承認・却下・取り下げ（JSON {id, action}）
+//   GET  /admin/new            管理者の投稿ページ（連投制限なし、すぐ公開・沈まないを選べる）
+//   POST /admin/submit         管理者の投稿（multipart: text, image?, publish?, pinned?）
 //   GET  /api/export           承認済みの一覧（Bearer EXPORT_TOKEN。GitHub Actions 用）
 //   GET  /api/export/image/:id 承認済みの画像（同上）
 
@@ -36,6 +38,8 @@ export default {
         if (request.method === "GET" && path === "/admin") return html(await adminPage(env));
         if (request.method === "GET" && path.startsWith("/admin/image/")) return await serveImage(env, path, false);
         if (request.method === "POST" && path === "/admin/review") return await handleReview(request, env);
+        if (request.method === "GET" && path === "/admin/new") return html(submitPage(env, { admin: true }));
+        if (request.method === "POST" && path === "/admin/submit") return await handleAdminSubmit(request, env);
       }
 
       if (path === "/api/export" || path.startsWith("/api/export/")) {
@@ -54,6 +58,26 @@ export default {
 
 // ───────── 投稿 ─────────
 
+// 本文と画像を取り出して確かめる。問題があれば { error } を返す
+async function readBottleForm(form, env) {
+  const maxText = parseInt(env.MAX_TEXT || "140", 10);
+  const body = normalizeText(String(form.get("text") || ""));
+  const length = Array.from(body).length;
+  if (length === 0) return { error: "手紙が空です。" };
+  if (length > maxText) return { error: `手紙は ${maxText} 文字までです。` };
+
+  let image = null;
+  let imageType = null;
+  const file = form.get("image");
+  if (file && typeof file === "object" && file.size > 0) {
+    if (!IMAGE_TYPES.includes(file.type)) return { error: "画像の形式に対応していません。" };
+    if (file.size > MAX_IMAGE_BYTES) return { error: "画像が大きすぎます。" };
+    image = await file.arrayBuffer();
+    imageType = file.type;
+  }
+  return { body, image, imageType };
+}
+
 async function handleSubmit(request, env) {
   const form = await request.formData();
   const ip = request.headers.get("CF-Connecting-IP") || "";
@@ -63,21 +87,9 @@ async function handleSubmit(request, env) {
     if (!ok) return json({ error: "ボットではないことの確認に失敗しました。もう一度お試しください。" }, 400);
   }
 
-  const maxText = parseInt(env.MAX_TEXT || "140", 10);
-  const body = normalizeText(String(form.get("text") || ""));
-  const length = Array.from(body).length;
-  if (length === 0) return json({ error: "手紙が空です。" }, 400);
-  if (length > maxText) return json({ error: `手紙は ${maxText} 文字までです。` }, 400);
-
-  let image = null;
-  let imageType = null;
-  const file = form.get("image");
-  if (file && typeof file === "object" && file.size > 0) {
-    if (!IMAGE_TYPES.includes(file.type)) return json({ error: "画像の形式に対応していません。" }, 400);
-    if (file.size > MAX_IMAGE_BYTES) return json({ error: "画像が大きすぎます。" }, 400);
-    image = await file.arrayBuffer();
-    imageType = file.type;
-  }
+  const parsed = await readBottleForm(form, env);
+  if (parsed.error) return json({ error: parsed.error }, 400);
+  const { body, image, imageType } = parsed;
 
   const now = Date.now();
   const ipHash = await sha256Hex((env.IP_SALT || "") + ip);
@@ -115,6 +127,34 @@ async function verifyTurnstile(secret, token, ip) {
   const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", { method: "POST", body });
   const data = await res.json();
   return data.success === true;
+}
+
+// ───────── 管理者の投稿（連投制限・ボット対策なし） ─────────
+
+async function handleAdminSubmit(request, env) {
+  if (request.headers.get("X-BottleMail-Admin") !== "1") return json({ error: "forbidden" }, 403);
+  const form = await request.formData();
+  const parsed = await readBottleForm(form, env);
+  if (parsed.error) return json({ error: parsed.error }, 400);
+  const { body, image, imageType } = parsed;
+
+  const publish = form.get("publish") === "1";
+  const pinned = form.get("pinned") === "1" ? 1 : 0;
+  const now = Date.now();
+
+  let slot = null;
+  if (publish && image) {
+    await sinkExpired(env);
+    slot = await findFreeSlot(env);
+    if (slot == null) return json({ error: "画像の置き場所がいっぱいです。古いボトルを取り下げてください。" }, 409);
+  }
+
+  const result = await env.DB.prepare(
+    `INSERT INTO bottles (text, image, image_type, status, slot, pinned, created_at, reviewed_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`
+  ).bind(body, image, imageType, publish ? "approved" : "pending", slot, pinned, now, publish ? now : null).run();
+
+  return json({ ok: true, id: formatId(result.meta.last_row_id) });
 }
 
 // ───────── 確認（管理者） ─────────
