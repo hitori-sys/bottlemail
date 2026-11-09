@@ -1,0 +1,22 @@
+name = "bottlemail"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+
+[vars]
+# 1通あたりの文字数の上限
+MAX_TEXT = "140"
+# 画像の置き場所の数（アトラス 16 枚 × 16 マス）。ワールド側の atlasUrls の数と合わせる
+MAX_SLOTS = "256"
+# Turnstile のサイトキー（空なら CAPTCHA なし。公開前に必ず設定する）
+TURNSTILE_SITE_KEY = ""
+
+# 秘密の値は `npx wrangler secret put 名前` で設定する（ここには書かない）
+#   ADMIN_PASSWORD   管理画面のパスワード（ユーザー名は admin）
+#   EXPORT_TOKEN     GitHub Actions が承認済みデータを取りに来るときの合言葉
+#   IP_SALT          連投制限用に IP をハッシュ化するときの塩
+#   TURNSTILE_SECRET Turnstile のシークレットキー（任意）
+
+[[d1_databases]]
+binding = "DB"
+database_name = "bottlemail"
+database_id = "REPLACE_WITH_D1_ID"

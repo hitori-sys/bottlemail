@@ -1,0 +1,53 @@
+# 承認済みのボトルを GitHub Pages に公開する。
+# 手紙はリポジトリにコミットせず、その場で作って直接公開する（履歴に残さない）。
+name: deploy-bottles
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # Worker の URL を設定するまでは何もしない
+    if: vars.BOTTLEMAIL_API != ''
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.build.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r builder/requirements.txt
+      - id: build
+        run: python builder/build.py
+        env:
+          BOTTLEMAIL_API: ${{ vars.BOTTLEMAIL_API }}
+          EXPORT_TOKEN: ${{ secrets.EXPORT_TOKEN }}
+          # 手動実行のときは中身が同じでも公開し直す
+          PAGES_URL: ${{ github.event_name == 'schedule' && format('https://{0}.github.io/{1}', github.repository_owner, github.event.repository.name) || '' }}
+      - if: steps.build.outputs.changed == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
