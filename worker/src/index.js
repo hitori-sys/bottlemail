@@ -205,10 +205,12 @@ async function findFreeSlot(env) {
 async function handleExport(env) {
   await sinkExpired(env);
   const { results } = await env.DB.prepare(
-    "SELECT id, text, slot, reviewed_at FROM bottles WHERE status = 'approved' ORDER BY id"
+    "SELECT id, text, slot, created_at FROM bottles WHERE status = 'approved' ORDER BY id"
   ).all();
   return json({
-    bottles: results.map((r) => ({ id: formatId(r.id), dbId: r.id, text: r.text, slot: r.slot })),
+    bottles: results.map((r) => ({
+      id: formatId(r.id), dbId: r.id, text: r.text, slot: r.slot, createdAt: r.created_at,
+    })),
   });
 }
 

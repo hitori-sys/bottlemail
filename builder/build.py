@@ -20,8 +20,11 @@ import os
 import sys
 import urllib.error
 import urllib.request
+from datetime import datetime, timedelta, timezone
 
 from PIL import Image, ImageOps
+
+JST = timezone(timedelta(hours=9))
 
 GRID = 4                 # 1 枚のアトラスに 4x4 マス
 CELL = 512               # 1 マスの大きさ
@@ -65,6 +68,10 @@ def main():
 
     for b in bottles:
         entry = {"id": b["id"], "text": b["text"]}
+        created = b.get("createdAt")
+        if created:
+            # 流した日時（日本時間）。ワールド側はこの文字列をそのまま表示する
+            entry["date"] = datetime.fromtimestamp(created / 1000, JST).strftime("%Y/%m/%d %H:%M")
         digest.update(json.dumps(entry, ensure_ascii=False, sort_keys=True).encode("utf-8"))
 
         slot = b.get("slot")
