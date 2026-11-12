@@ -22,7 +22,7 @@ export function submitPage(env, { admin = false } = {}) {
         </ul>
       </div>
 
-      <label class="agree"><input type="checkbox" id="agree"> 上のことを読んで、公開されることに同意します</label>`;
+      <label class="agree"><input type="checkbox" id="agree"> 上のことに同意して流します</label>`;
   const turnstileScript = siteKey
     ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>'
     : "";
