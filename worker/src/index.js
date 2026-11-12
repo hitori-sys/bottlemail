@@ -144,7 +144,6 @@ async function handleAdminSubmit(request, env) {
 
   let slot = null;
   if (publish && image) {
-    await sinkExpired(env);
     slot = await findFreeSlot(env);
     if (slot == null) return json({ error: "画像の置き場所がいっぱいです。古いボトルを取り下げてください。" }, 409);
   }
@@ -153,6 +152,7 @@ async function handleAdminSubmit(request, env) {
     `INSERT INTO bottles (text, image, image_type, status, slot, pinned, created_at, reviewed_at)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`
   ).bind(body, image, imageType, publish ? "approved" : "pending", slot, pinned, now, publish ? now : null).run();
+  if (publish) await sinkExpired(env); // 上限を超えたら古いものから沈める
 
   return json({ ok: true, id: formatId(result.meta.last_row_id) });
 }
@@ -170,7 +170,6 @@ async function handleReview(request, env) {
   const now = Date.now();
 
   if (action === "approve") {
-    await sinkExpired(env); // 沈んだボトルの画像の置き場所を先に空ける
     let slot = row.slot;
     if (row.has_image && slot == null) {
       slot = await findFreeSlot(env);
@@ -178,6 +177,7 @@ async function handleReview(request, env) {
     }
     await env.DB.prepare("UPDATE bottles SET status = 'approved', slot = ?2, reviewed_at = ?3 WHERE id = ?1")
       .bind(id, slot, now).run();
+    await sinkExpired(env); // 上限を超えたら古いものから沈める
   } else if (action === "reject" || action === "remove") {
     const status = action === "reject" ? "rejected" : "removed";
     // 却下・取り下げたものは画像も消す（手元にも残さない）
