@@ -1,14 +1,23 @@
 // 確認画面（スマホで1件ずつタップして承認・却下する）
 import { formatId, maxAfloat, sinkExpired } from "../util.js";
 
-export async function adminPage(env) {
+export async function adminPage(env, origin) {
   await sinkExpired(env);
   const max = maxAfloat(env);
   const pending = await env.DB.prepare(
-    "SELECT id, text, image IS NOT NULL AS has_image, created_at FROM bottles WHERE status = 'pending' ORDER BY id LIMIT 50"
+    `SELECT b.id, b.text, b.image IS NOT NULL AS has_image, b.created_at, c.name AS collaborator
+     FROM bottles b LEFT JOIN collaborators c ON c.id = b.collaborator_id
+     WHERE b.status = 'pending' ORDER BY b.id LIMIT 50`
   ).all();
   const approved = await env.DB.prepare(
-    "SELECT id, text, image IS NOT NULL AS has_image, slot, pinned, reviewed_at FROM bottles WHERE status = 'approved' ORDER BY reviewed_at DESC, id DESC LIMIT 300"
+    `SELECT b.id, b.text, b.image IS NOT NULL AS has_image, b.slot, b.pinned, b.reviewed_at, c.name AS collaborator
+     FROM bottles b LEFT JOIN collaborators c ON c.id = b.collaborator_id
+     WHERE b.status = 'approved' ORDER BY b.reviewed_at DESC, b.id DESC LIMIT 300`
+  ).all();
+  const collaborators = await env.DB.prepare(
+    `SELECT c.id, c.name, c.token, c.active, COUNT(b.id) AS posts
+     FROM collaborators c LEFT JOIN bottles b ON b.collaborator_id = c.id
+     GROUP BY c.id ORDER BY c.id`
   ).all();
   // 「沈まない」以外を新しい順に数えて、あと何通の承認で沈むかを出す（上限 max 通）
   let rank = 0;
@@ -18,7 +27,7 @@ export async function adminPage(env) {
 
   const card = (r, buttons) => `
     <article class="card" id="b${r.id}">
-      <div class="meta">No.${formatId(r.id)}${r.slot != null ? ` ・ 画像枠 ${r.slot}` : ""} ・ ${fmtDate(r.created_at || r.reviewed_at)}${r.pinned ? " ・ 沈まない" : r.rank ? ` ・ あと ${max - r.rank + 1} 通で沈む` : ""}</div>
+      <div class="meta">No.${formatId(r.id)}${r.slot != null ? ` ・ 画像枠 ${r.slot}` : ""} ・ ${fmtDate(r.created_at || r.reviewed_at)}${r.collaborator ? ` ・ 協力者 ${escapeHtml(r.collaborator)}` : ""}${r.pinned ? " ・ 沈まない" : r.rank ? ` ・ あと ${max - r.rank + 1} 通で沈む` : ""}</div>
       ${r.has_image ? `<img src="/admin/image/${r.id}" loading="lazy" alt="">` : ""}
       <p class="text">${escapeHtml(r.text)}</p>
       <div class="actions">${buttons}</div>
@@ -34,6 +43,22 @@ export async function adminPage(env) {
     ? approved.results.map((r) => card(r,
         `<button class="ng" data-id="${r.id}" data-action="remove" data-confirm="1">取り下げる</button>`)).join("")
     : '<p class="empty">公開中のボトルはありません。</p>';
+
+  const collabHtml = collaborators.results.map((c) => {
+    const url = `${origin}/c/${c.token}`;
+    return `
+    <article class="card collab${c.active ? "" : " stopped"}">
+      <div class="meta">${escapeHtml(c.name)} ・ 投稿 ${c.posts} 通${c.active ? "" : " ・ 停止中"}</div>
+      <input class="url" readonly value="${escapeHtml(url)}">
+      <div class="actions">
+        <button class="sub" data-copy="${escapeHtml(url)}">URL をコピー</button>
+        ${c.active
+          ? `<button class="ng" data-collab="${c.id}" data-action="stop">停止</button>`
+          : `<button class="ok" data-collab="${c.id}" data-action="resume">再開</button>`}
+        <button class="ng" data-collab="${c.id}" data-action="delete" data-confirm="この協力者を削除しますか？（URL は使えなくなります。流した手紙は残ります）">削除</button>
+      </div>
+    </article>`;
+  }).join("") || '<p class="empty">協力者はまだいません。</p>';
 
   return `<!doctype html>
 <html lang="ja">
@@ -60,6 +85,12 @@ export async function adminPage(env) {
   .actions button:disabled { opacity: .5; }
   .done { opacity: .45; }
   .empty { color: var(--muted); }
+  .sub { background: #2f8fb3; }
+  .stopped { opacity: .6; }
+  .url { width: 100%; padding: 8px; font-size: .85rem; border: 1px solid #ddd; border-radius: 6px; margin-bottom: 10px; font-family: monospace; }
+  .addCollab { display: flex; gap: 8px; margin-bottom: 12px; }
+  .addCollab input { flex: 1; padding: 10px; font-size: 1rem; border: 1px solid #ccc; border-radius: 8px; font-family: inherit; }
+  .addCollab button { padding: 10px 16px; font-size: 1rem; font-weight: bold; border: none; border-radius: 8px; color: #fff; background: #2f8fb3; cursor: pointer; font-family: inherit; }
   a.new { display: inline-block; padding: 10px 14px; background: #2f8fb3; color: #fff; border-radius: 8px; text-decoration: none; font-weight: bold; }
 </style>
 </head>
@@ -75,9 +106,51 @@ export async function adminPage(env) {
 
   <h2>公開中（新しい順）</h2>
   ${approvedHtml}
+
+  <h2>協力者</h2>
+  <p class="summary">協力者ごとの投稿 URL です。連投制限・ボット確認なしで流せます（公開はここで承認してから）。URL を知っていれば誰でも使えるので、渡す相手だけに伝えてください。漏れたら「停止」か「削除」してください。</p>
+  <form class="addCollab" id="addCollab">
+    <input id="collabName" maxlength="40" placeholder="協力者の名前（自分用のメモ）">
+    <button type="submit">URL を作る</button>
+  </form>
+  ${collabHtml}
 </main>
 <script>
+async function postJson(url, obj) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-BottleMail-Admin": "1" },
+    body: JSON.stringify(obj),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || "失敗しました");
+  return body;
+}
+
+document.getElementById("addCollab").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    await postJson("/admin/collaborators", { action: "add", name: document.getElementById("collabName").value });
+    location.reload();
+  } catch (err) { alert(err.message); }
+});
+
 document.addEventListener("click", async (e) => {
+  const copy = e.target.closest("button[data-copy]");
+  if (copy) {
+    try { await navigator.clipboard.writeText(copy.dataset.copy); copy.textContent = "コピーしました"; }
+    catch { copy.closest(".card").querySelector(".url").select(); }
+    return;
+  }
+  const cb = e.target.closest("button[data-collab]");
+  if (cb) {
+    if (cb.dataset.confirm && !confirm(cb.dataset.confirm)) return;
+    try {
+      await postJson("/admin/collaborators", { action: cb.dataset.action, id: Number(cb.dataset.collab) });
+      location.reload();
+    } catch (err) { alert(err.message); }
+    return;
+  }
   const b = e.target.closest("button[data-action]");
   if (!b) return;
   if (b.dataset.confirm && !confirm("このボトルを取り下げますか？（画像も削除されます）")) return;

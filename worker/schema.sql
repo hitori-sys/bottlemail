@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS bottles (
   slot        INTEGER,            -- 画像の置き場所（atlas * 16 + cell）。承認時に割り当て、以後固定
   pinned      INTEGER NOT NULL DEFAULT 0, -- 1 なら期限で沈まない（管理者の投稿用）
   ip_hash     TEXT,               -- 連投制限用（IP そのものは保存しない）
+  collaborator_id INTEGER,        -- 協力者の投稿 URL から流したとき、その協力者
   created_at  INTEGER NOT NULL,
   reviewed_at INTEGER
 );
@@ -16,3 +17,12 @@ CREATE TABLE IF NOT EXISTS bottles (
 CREATE INDEX IF NOT EXISTS idx_bottles_status ON bottles(status);
 CREATE INDEX IF NOT EXISTS idx_bottles_ip     ON bottles(ip_hash, created_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_bottles_slot ON bottles(slot) WHERE slot IS NOT NULL;
+
+-- 協力者（連投制限なしの投稿 URL /c/<token> を渡す相手）
+CREATE TABLE IF NOT EXISTS collaborators (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT    NOT NULL,
+  token      TEXT    NOT NULL UNIQUE,
+  active     INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL
+);

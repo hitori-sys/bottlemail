@@ -1,12 +1,18 @@
 // 投稿ページ（スマホ前提の1枚もの）
 // admin: true のときは管理者用（連投制限・ボット対策なし、すぐ公開・沈まないを選べる、続けて書ける）
-export function submitPage(env, { admin = false } = {}) {
+// collaborator: {id, name, token} のときは協力者用（連投制限・ボット対策なし、続けて書ける。公開は確認後）
+export function submitPage(env, { admin = false, collaborator = null } = {}) {
   const maxText = parseInt(env.MAX_TEXT || "140", 10);
-  const siteKey = admin ? "" : env.TURNSTILE_SITE_KEY || "";
+  const repeat = admin || !!collaborator; // 送ったあともフォームを残して続けて書ける
+  const siteKey = repeat ? "" : env.TURNSTILE_SITE_KEY || "";
   const title = admin ? "管理者としてボトルを流す" : "ボトルメールを流す";
   const lead = admin
     ? '連投制限なしで流せます。<a href="/admin">確認画面に戻る</a>'
+    : collaborator
+    ? `${escapeAttr(collaborator.name)} さん用の投稿ページです。連投制限なしで、続けて何通でも流せます。<br>このページのアドレスは、ほかの人に教えないでください。`
     : "あなたの手紙を、どこかの浜辺に届けます。<br>VRChat のどこかのインスタンスで、知らない誰かが拾うかもしれません。";
+  const submitUrl = admin ? "/admin/submit" : collaborator ? `/c/${collaborator.token}/submit` : "/api/submit";
+  const submitHeaders = admin ? { "X-BottleMail-Admin": "1" } : collaborator ? { "X-BottleMail-Collab": "1" } : {};
   const notice = admin
     ? `<div class="note">
         <label class="agree"><input type="checkbox" id="publish" checked> すぐ公開する（外すと確認待ちに入る）</label>
@@ -111,6 +117,9 @@ ${turnstileScript}
 
 <script>
 const ADMIN = ${admin ? "true" : "false"};
+const REPEAT = ${repeat ? "true" : "false"};
+const SUBMIT_URL = ${JSON.stringify(submitUrl)};
+const SUBMIT_HEADERS = ${JSON.stringify(submitHeaders)};
 const MAX = ${maxText};
 const MAX_SIDE = 1024;
 const MAX_BYTES = 550 * 1024;
@@ -192,18 +201,18 @@ form.addEventListener("submit", async (e) => {
     data.append("pinned", document.getElementById("pinned").checked ? "1" : "0");
   }
   try {
-    const res = ADMIN
-      ? await fetch("/admin/submit", { method: "POST", body: data, headers: { "X-BottleMail-Admin": "1" } })
-      : await fetch("/api/submit", { method: "POST", body: data });
+    const res = await fetch(SUBMIT_URL, { method: "POST", body: data, headers: SUBMIT_HEADERS });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error || "送れませんでした。");
-    if (ADMIN) {
+    if (REPEAT) {
       // 続けて書けるように、フォームは残して中身だけ空にする
       textEl.value = "";
       imageBlob = null;
       fileEl.value = "";
       preview.style.display = "none";
-      message.textContent = "No." + body.id + " を流しました。続けて書けます。";
+      message.textContent = ADMIN
+        ? "No." + body.id + " を流しました。続けて書けます。"
+        : "No." + body.id + " を流しました（確認が済むと届くようになります）。続けて書けます。";
       message.className = "message";
       update();
       return;

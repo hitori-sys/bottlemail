@@ -7,6 +7,9 @@
 //   POST /admin/review         承認・却下・取り下げ（JSON {id, action}）
 //   GET  /admin/new            管理者の投稿ページ（連投制限なし、すぐ公開・沈まないを選べる）
 //   POST /admin/submit         管理者の投稿（multipart: text, image?, publish?, pinned?）
+//   POST /admin/collaborators  協力者の追加・停止・再開・削除（JSON {action, name?, id?}）
+//   GET  /c/:token             協力者の投稿ページ（連投制限・ボット対策なし。確認待ちに入る）
+//   POST /c/:token/submit      協力者の投稿（multipart: text, image?）
 //   GET  /api/export           承認済みの一覧（Bearer EXPORT_TOKEN。GitHub Actions 用）
 //   GET  /api/export/image/:id 承認済みの画像（同上）
 
@@ -28,6 +31,15 @@ export default {
       if (request.method === "GET" && path === "/robots.txt") return text("User-agent: *\nDisallow: /\n");
       if (request.method === "POST" && path === "/api/submit") return await handleSubmit(request, env);
 
+      const collab = path.match(/^\/c\/([A-Za-z0-9_-]{16,64})(\/submit)?$/);
+      if (collab) {
+        const who = await findCollaborator(env, collab[1]);
+        if (!who) return text("Not found", 404);
+        if (request.method === "GET" && !collab[2]) return html(submitPage(env, { collaborator: { ...who, token: collab[1] } }));
+        if (request.method === "POST" && collab[2]) return await handleCollaboratorSubmit(request, env, who);
+        return text("Not found", 404);
+      }
+
       if (path === "/admin" || path.startsWith("/admin/")) {
         if (!checkAdmin(request, env)) {
           return new Response("認証が必要です", {
@@ -35,11 +47,12 @@ export default {
             headers: { "WWW-Authenticate": 'Basic realm="bottlemail-admin", charset="UTF-8"' },
           });
         }
-        if (request.method === "GET" && path === "/admin") return html(await adminPage(env));
+        if (request.method === "GET" && path === "/admin") return html(await adminPage(env, url.origin));
         if (request.method === "GET" && path.startsWith("/admin/image/")) return await serveImage(env, path, false);
         if (request.method === "POST" && path === "/admin/review") return await handleReview(request, env);
         if (request.method === "GET" && path === "/admin/new") return html(submitPage(env, { admin: true }));
         if (request.method === "POST" && path === "/admin/submit") return await handleAdminSubmit(request, env);
+        if (request.method === "POST" && path === "/admin/collaborators") return await handleCollaborators(request, env);
       }
 
       if (path === "/api/export" || path.startsWith("/api/export/")) {
@@ -127,6 +140,57 @@ async function verifyTurnstile(secret, token, ip) {
   const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", { method: "POST", body });
   const data = await res.json();
   return data.success === true;
+}
+
+// ───────── 協力者の投稿（連投制限・ボット対策なし。公開は管理者の確認後） ─────────
+
+async function findCollaborator(env, token) {
+  return await env.DB.prepare("SELECT id, name FROM collaborators WHERE token = ?1 AND active = 1")
+    .bind(token).first();
+}
+
+async function handleCollaboratorSubmit(request, env, who) {
+  // 他サイトからのなりすまし送信（CSRF）を防ぐため、投稿ページが付ける独自ヘッダーを必須にする
+  if (request.headers.get("X-BottleMail-Collab") !== "1") return json({ error: "forbidden" }, 403);
+  const form = await request.formData();
+  const parsed = await readBottleForm(form, env);
+  if (parsed.error) return json({ error: parsed.error }, 400);
+  const { body, image, imageType } = parsed;
+
+  const result = await env.DB.prepare(
+    `INSERT INTO bottles (text, image, image_type, status, collaborator_id, created_at)
+     VALUES (?1, ?2, ?3, 'pending', ?4, ?5)`
+  ).bind(body, image, imageType, who.id, Date.now()).run();
+  return json({ ok: true, id: formatId(result.meta.last_row_id) });
+}
+
+// 協力者の管理（管理者のみ）
+async function handleCollaborators(request, env) {
+  if (request.headers.get("X-BottleMail-Admin") !== "1") return json({ error: "forbidden" }, 403);
+  const { action, id, name } = await request.json();
+  if (action === "add") {
+    const n = String(name || "").trim().slice(0, 40);
+    if (!n) return json({ error: "名前を入れてください。" }, 400);
+    await env.DB.prepare("INSERT INTO collaborators (name, token, active, created_at) VALUES (?1, ?2, 1, ?3)")
+      .bind(n, randomToken(), Date.now()).run();
+    return json({ ok: true });
+  }
+  if (action === "stop" || action === "resume") {
+    await env.DB.prepare("UPDATE collaborators SET active = ?2 WHERE id = ?1").bind(id, action === "resume" ? 1 : 0).run();
+    return json({ ok: true });
+  }
+  if (action === "delete") {
+    // 投稿済みの手紙は残す（誰からかの表示だけ消える）
+    await env.DB.prepare("UPDATE bottles SET collaborator_id = NULL WHERE collaborator_id = ?1").bind(id).run();
+    await env.DB.prepare("DELETE FROM collaborators WHERE id = ?1").bind(id).run();
+    return json({ ok: true });
+  }
+  return json({ error: "bad_action" }, 400);
+}
+
+function randomToken() {
+  const bytes = crypto.getRandomValues(new Uint8Array(18)); // 24 文字
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 // ───────── 管理者の投稿（連投制限・ボット対策なし） ─────────
